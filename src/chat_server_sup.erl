@@ -26,12 +26,10 @@ start_link() ->
 %%                  type => worker(),       % optional
 %%                  modules => modules()}   % optional
 init([]) ->
-    SupFlags = #{
-        strategy => one_for_all,
-        intensity => 0,
-        period => 1
-    },
-    ChildSpecs = [],
-    {ok, {SupFlags, ChildSpecs}}.
+ %% Define the worker process (chat server) that the supervisor will manage
+    Children = [
+        {chat_server, {chat_server, start_link, []}, permanent, 5000, worker, [chat_server]}
+    ],
+    {ok, {{one_for_one, 5, 10}, Children}}.
 
 %% internal functions
