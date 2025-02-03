@@ -16,12 +16,13 @@ handle_client(Socket, undefined, _) ->
 handle_client(Socket, Name, Room) ->
     WelcomeMessage = "Welcome " ++ Name ++ "!\n"
                     "Commands:"
-                    "  list_rooms"
-                    "  create_room <name>"
-                    "  join_room <name>"
-                    "  leave_room"
-                    "  destroy_room <name>"
-                    "  quit\n",
+                    " - list_rooms"
+                    " - create_room <name>"
+                    " - join_room <name>"
+                    " - leave_room"
+                    " - destroy_room <name>"
+                    " - priv <recipient> <message>"
+                    " - quit\n",
     gen_tcp:send(Socket, list_to_binary(WelcomeMessage)),
     case gen_tcp:recv(Socket, 0) of
         {ok, Data} -> 
@@ -52,6 +53,16 @@ handle_client(Socket, Name, Room) ->
                     TrimmedRoomName = string:trim(RoomName),
                     gen_server:cast(chat_server, {destroy_room, self(), TrimmedRoomName}),
                     handle_client(Socket, Name, Room);
+                "priv " ++ Rest -> 
+                    case string:split(Rest, " ") of
+                        [To | MessageParts] ->
+                            PrivateMessage = string:join(MessageParts, " "),
+                            gen_server:cast(chat_server, {private_message, Name, To, PrivateMessage}),
+                            handle_client(Socket, Name, Room);
+                        _ ->
+                            gen_tcp:send(Socket, <<"Invalid private message format. Use: priv <recipient> <message>\n">>),
+                            handle_client(Socket, Name, Room)
+                    end;
                 _ -> 
                     case Room of
                         undefined -> 

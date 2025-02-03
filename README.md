@@ -17,3 +17,19 @@ To start the server, run:
     $ rebar3 shell
 
 Once the shell is loaded, the server will start and listen on the port defined in the configuration file
+
+## Deployment application on aws
+
+To run the terraform script:
+
+    $ terraform init
+    $ terraform apply
+
+To destroy the resources created:
+$ terraform destroy
+
+## Test
+
+To see the app into action:
+
+    $ telnet ip_server 8085

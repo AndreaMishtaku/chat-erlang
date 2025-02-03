@@ -113,6 +113,20 @@ handle_cast({join_room, ClientPid, RoomName}, State) ->
             {noreply, State#state{rooms = NewRooms, clients = NewClients}}
     end;
 
+handle_cast({private_message, From, To, Message}, State) ->
+    case find_client_by_name(To, State#state.clients) of
+        undefined ->
+            case maps:get(self(), State#state.clients, undefined) of
+                undefined -> {noreply, State};
+                {Socket, _Name, _Room} -> 
+                    gen_tcp:send(Socket, io_lib:format("User ~s not found.~n", [To])),
+                    {noreply, State}
+            end;
+        {RecipientSocket, _Name, _Room} ->
+            gen_tcp:send(RecipientSocket, io_lib:format("[Private from ~s]: ~s~n", [From, Message])),
+            {noreply, State}
+    end;
+
 handle_cast({leave_room, ClientPid}, State) ->
     io:format("Attempting to leave room by client ~p~n", [ClientPid]),
     case maps:get(ClientPid, State#state.clients, undefined) of
@@ -141,3 +155,11 @@ terminate(_Reason, _State) ->
 
 broadcast(Room, From, Message) ->
     gen_server:cast(?MODULE, {broadcast, Room, From, Message}).
+
+find_client_by_name(Name, Clients) ->
+    maps:fold(fun(_Pid, {Socket, ClientName, Room}, Acc) ->
+        case ClientName =:= Name of
+            true -> {Socket, ClientName, Room};
+            false -> Acc
+        end
+    end, undefined, Clients).
