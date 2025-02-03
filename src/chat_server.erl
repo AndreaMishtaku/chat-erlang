@@ -7,6 +7,7 @@
 -record(state, {
     listener,
     rooms = #{},
+    private_rooms = #{},
     clients = #{}
 }).
 
@@ -37,8 +38,24 @@ handle_cast({new_client, Socket}, State) ->
     {noreply, State#state{clients = maps:put(ClientPid, {Socket, undefined, undefined}, State#state.clients)}};
 
 handle_cast({broadcast, Room, From, Message}, State) ->
+    io:format("Broadcasting message in room ~s from ~s: ~s~n", [Room, From, Message]),
     case maps:get(Room, State#state.rooms, undefined) of
-        undefined -> {noreply, State};
+        undefined ->
+            case maps:get(Room, State#state.private_rooms, undefined) of
+                undefined ->
+                    io:format("Room ~s does not exist~n", [Room]),
+                    {noreply, State};
+                {_CreatorPid, Members} ->
+                    lists:foreach(
+                        fun(MemberPid) ->
+                            case maps:get(MemberPid, State#state.clients, undefined) of
+                                undefined -> ok;
+                                {ClientSocket, _Name, _Room} -> 
+                                    gen_tcp:send(ClientSocket, io_lib:format("~s: ~s~n", [From, Message]))
+                            end
+                        end, Members),
+                    {noreply, State}
+            end;
         {_CreatorPid, ClientPids} ->
             lists:foreach(
                 fun(ClientPid) ->
@@ -139,13 +156,82 @@ handle_cast({leave_room, ClientPid}, State) ->
     end;
 
 handle_cast({list_rooms, ClientPid}, State) ->
-    RoomList = maps:keys(State#state.rooms),
+    PublicRooms = maps:keys(State#state.rooms),
+    PrivateRooms = maps:fold(fun(RoomName, {_CreatorPid, Members}, Acc) ->
+        case lists:member(ClientPid, Members) of
+            true -> [RoomName | Acc];
+            false -> Acc
+        end
+    end, [], State#state.private_rooms),
+    AllRooms = PublicRooms ++ PrivateRooms,
     case maps:get(ClientPid, State#state.clients, undefined) of
         undefined -> {noreply, State};
         {Socket, _Name, _Room} ->
-            gen_tcp:send(Socket, io_lib:format("Available rooms: ~p~n", [RoomList])),
+            gen_tcp:send(Socket, io_lib:format("Available rooms: ~p~n", [AllRooms])),
             {noreply, State}
+    end;
+
+handle_cast({create_private_room, ClientPid, RoomName}, State) ->
+    io:format("Attempting to create private room: ~s by client ~p~n", [RoomName, ClientPid]),
+    case maps:get(RoomName, State#state.rooms, undefined) of
+        undefined ->
+            case maps:get(RoomName, State#state.private_rooms, undefined) of
+                undefined ->
+                    io:format("Private room ~s created by ~p~n", [RoomName, ClientPid]),
+                    NewPrivateRooms = maps:put(RoomName, {ClientPid, [ClientPid]}, State#state.private_rooms),
+                    {noreply, State#state{private_rooms = NewPrivateRooms}};
+                _ ->
+                    io:format("Private room ~s already exists~n", [RoomName]),
+                    {noreply, State}
+            end;
+        _ ->
+            io:format("Room ~s already exists as a public room~n", [RoomName]),
+            {noreply, State}
+    end;
+
+handle_cast({invite_to_private_room, ClientPid, RoomName, InviteeName}, State) ->
+    io:format("Attempting to invite ~s to private room ~s by client ~p~n", [InviteeName, RoomName, ClientPid]),
+    case maps:get(RoomName, State#state.private_rooms, undefined) of
+        undefined ->
+            io:format("Private room ~s does not exist~n", [RoomName]),
+            {noreply, State};
+        {CreatorPid, Members} ->
+            if
+                CreatorPid =:= ClientPid ->
+                    case find_client_by_name(InviteeName, State#state.clients) of
+                        undefined ->
+                            io:format("User ~s not found~n", [InviteeName]),
+                            {noreply, State};
+                        {InviteeSocket, _Name, _Room} ->
+                            io:format("User ~s invited to private room ~s~n", [InviteeName, RoomName]),
+                            gen_tcp:send(InviteeSocket, io_lib:format("You have been invited to join private room ~s. Use 'join_private_room ~s' to join.~n", [RoomName, RoomName])),
+                            NewPrivateRooms = maps:put(RoomName, {CreatorPid, [InviteeSocket | Members]}, State#state.private_rooms),
+                            {noreply, State#state{private_rooms = NewPrivateRooms}}
+                    end;
+                true ->
+                    io:format("Client ~p is not the creator of private room ~s~n", [ClientPid, RoomName]),
+                    {noreply, State}
+            end
+    end;
+
+handle_cast({join_private_room, ClientPid, RoomName}, State) ->
+    io:format("Attempting to join private room: ~s by client ~p~n", [RoomName, ClientPid]),
+    case maps:get(RoomName, State#state.private_rooms, undefined) of
+        undefined ->
+            io:format("Private room ~s does not exist~n", [RoomName]),
+            {noreply, State};
+        {_CreatorPid, Members} ->
+            case lists:member(ClientPid, Members) of
+                true ->
+                    io:format("Client ~p joined private room ~s~n", [ClientPid, RoomName]),
+                    NewClients = maps:update(ClientPid, {element(1, maps:get(ClientPid, State#state.clients)), element(2, maps:get(ClientPid, State#state.clients)), RoomName}, State#state.clients),
+                    {noreply, State#state{clients = NewClients}};
+                false ->
+                    io:format("Client ~p is not invited to private room ~s~n", [ClientPid, RoomName]),
+                    {noreply, State}
+            end
     end.
+
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.

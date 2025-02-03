@@ -15,10 +15,13 @@ handle_client(Socket, undefined, _) ->
 
 handle_client(Socket, Name, Room) ->
     WelcomeMessage = "Welcome " ++ Name ++ "!\n"
-                    "Commands:"
+                    "Commands:\n"
                     " - list_rooms"
                     " - create_room <name>"
+                    " - create_private_room <name>"
+                    " - invite <room> <user>"
                     " - join_room <name>"
+                    " - join_private_room <name>"
                     " - leave_room"
                     " - destroy_room <name>"
                     " - priv <recipient> <message>"
@@ -63,6 +66,23 @@ handle_client(Socket, Name, Room) ->
                             gen_tcp:send(Socket, <<"Invalid private message format. Use: priv <recipient> <message>\n">>),
                             handle_client(Socket, Name, Room)
                     end;
+                "create_private_room " ++ RoomName -> 
+                    TrimmedRoomName = string:trim(RoomName),
+                    gen_server:cast(chat_server, {create_private_room, self(), TrimmedRoomName}),
+                    handle_client(Socket, Name, Room);
+                "invite " ++ Rest -> 
+                    case string:split(Rest, " ") of
+                        [RoomName, InviteeName] ->
+                            gen_server:cast(chat_server, {invite_to_private_room, self(), RoomName, InviteeName}),
+                            handle_client(Socket, Name, Room);
+                        _ ->
+                            gen_tcp:send(Socket, <<"Invalid invite format. Use: invite <room> <user>\n">>),
+                            handle_client(Socket, Name, Room)
+                    end;
+                "join_private_room " ++ RoomName -> 
+                    TrimmedRoomName = string:trim(RoomName),
+                    gen_server:cast(chat_server, {join_private_room, self(), TrimmedRoomName}),
+                    handle_client(Socket, Name, TrimmedRoomName);                
                 _ -> 
                     case Room of
                         undefined -> 
